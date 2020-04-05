@@ -1,32 +1,106 @@
 package pptp
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	log "github.com/sirupsen/logrus"
-	"io/ioutil"
+	"math/rand"
 	"os/exec"
+	"regexp"
+	"socket2vpn/config"
+	"socket2vpn/env"
+	"socket2vpn/util"
+	"strings"
+	"time"
 )
 
-// 简历pptp通道
-func Conn() {
+// 关闭所有管道
+func CloseAll() error {
+	log.Debug("关闭通道所有通道")
+	cmd := exec.Command("poff", "-a")
+	return cmd.Run()
+}
 
-	fmt.Printf("start ")
-	cmd := exec.Command("ifconfig")
+func ClosePPTP(pptpName string) error {
+	log.Debug("关闭通道：", pptpName)
+	cmd := exec.Command("poff", pptpName)
+	return cmd.Run()
+}
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil { //获取输出对象，可以从该对象中读取输出结果
-		log.Fatal(err)
+// 建立pptp通道
+func NewPPTP(u config.User) error {
+
+	ClosePPTP(u.User)
+
+	fmt.Printf("start pptp [%s] \n", u.User)
+
+	serverIP := config.Values.Servers[rand.Intn(len(config.Values.Servers)-1)]
+	cmdStr := fmt.Sprintf(" --creat %s --server %s --username %s --password %s --encrypt --start", u.User, serverIP, u.User, u.Pass)
+	log.Debug("创建PPTP：", cmdStr)
+	cmd := exec.Command("pptpsetup", strings.Split(cmdStr, " ")...)
+	//cmd := exec.Command("ls", "-al")
+
+	var outbuf, errbuf bytes.Buffer
+	cmd.Stdout = &outbuf
+	cmd.Stderr = &errbuf
+
+	err := cmd.Start()
+	done := make(chan error, 1)
+
+	go func() {
+		done <- cmd.Wait()
+	}()
+	select {
+	case <-time.After(10 * time.Second):
+		cmd.Process.Kill()
+	case err := <-done:
+		if err != nil {
+			log.Warn("执行出错: %v", err, errbuf.String())
+		}
 	}
-	defer stdout.Close() // 保证关闭输出流
 
-	cmd.Start()
-
-	if opBytes, err := ioutil.ReadAll(stdout); err != nil { // 读取输出结果
-		log.Fatal(err)
-	} else {
-		fmt.Printf("文件： %s", opBytes)
+	connectName, err := GetConnectName(outbuf.String())
+	if err != nil {
+		return err
 	}
 
-	cmd.Wait()
+	//写入缓存
+	log.Debug("写入pptp到缓存")
+	ppp, err := getPPTP(u.User, connectName)
+	if err != nil {
+		return err
+	}
+	env.SavePPTP(u.User, ppp)
+
+	return nil
+
+}
+
+func getPPTP(user, connectName string) (*env.PPTP, error) {
+	ip, err := util.GetPPPIp(connectName)
+	if err != nil {
+		return nil, err
+	}
+
+	p := &env.PPTP{
+		Ip:          ip,
+		PPTPName:    user,
+		ConnectName: connectName,
+	}
+
+	return p, nil
+
+}
+
+// 获取通道名称
+func GetConnectName(str string) (string, error) {
+
+	re, _ := regexp.Compile("ppp[0-9a-zA-Z_]+")
+	one := re.Find([]byte(str))
+	if len(one) == 0 {
+		return "", errors.New("未找到通道")
+	}
+	return string(one), nil
 
 }

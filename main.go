@@ -5,12 +5,13 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
 	"gopkg.in/ffmt.v1"
-	"net"
 	"os"
 	"path"
 	"runtime"
 	"socket2vpn/config"
+	"socket2vpn/pptp"
 	"socket2vpn/proxy"
+	"time"
 )
 
 var (
@@ -31,31 +32,23 @@ func main() {
 	ffmt.Print(config.Values)
 	initLog()
 
-	socket, err := net.Listen("tcp", ":8081")
-	if err != nil {
-		return
-	}
-	log.Infof("socks5 proxy server running on port [:%d], listening ...", aurora.Green(8081))
+	users := config.Values.Users
 
-	for {
-		client, err := socket.Accept()
+	pptp.CloseAll()
 
-		if err != nil {
-			return
+	for _, u := range users {
+		if err := pptp.NewPPTP(u); err != nil {
+			log.Fatalf("建立[%s]pptp通道出错: %s", aurora.BgRed(u.User), err)
 		}
-
-		var handler proxy.Handler = &proxy.Socks5ProxyHandler{
-			Auth: false,
-		}
-
-		go handler.Handle(client)
-
-		log.Println(aurora.Blue(client), " request handling...")
+		go proxy.NewSocket5(u)
 	}
 
+	select {}
 }
 
 func initLog() {
+
+	time.Sleep(1 * time.Second)
 	c := config.Values.Log
 
 	if c.LoggerFile != "" && c.Writers == "file" {
@@ -66,7 +59,9 @@ func initLog() {
 		}
 
 		log.SetFormatter(&log.TextFormatter{
-			DisableColors: true,
+			FullTimestamp:   true,
+			TimestampFormat: "2006-01-02 15:04:05",
+			DisableColors:   true,
 		})
 
 		log.SetOutput(file)
@@ -76,5 +71,7 @@ func initLog() {
 
 	if c.LoggerLevel == "ERROR" {
 		log.SetLevel(log.ErrorLevel)
+	} else {
+		log.SetLevel(log.DebugLevel)
 	}
 }

@@ -2,11 +2,13 @@ package proxy
 
 import (
 	"fmt"
+	"github.com/logrusorgru/aurora"
+	log "github.com/sirupsen/logrus"
 	"io"
-	"log"
 	"net"
+	"socket2vpn/config"
+	"socket2vpn/env"
 	"strconv"
-	//"syscall"
 )
 
 var (
@@ -20,6 +22,7 @@ var (
 )
 
 type Socks5ProxyHandler struct {
+	Port int //socket的端口
 	Auth bool
 	User string
 	Pass string
@@ -48,23 +51,6 @@ func (socks5 Socks5ProxyHandler) getInfo(b []byte, connect net.Conn) (host, port
 	return host, port
 }
 
-func (Socks5ProxyHandler) getPPPIp(netInterface string) (*net.TCPAddr, error) {
-	ief, err := net.InterfaceByName(netInterface)
-	if err != nil {
-		fmt.Println(err)
-	}
-	addrs, err := ief.Addrs()
-	if err != nil {
-		fmt.Println(err)
-		return nil, err
-	}
-	tcpAddr := &net.TCPAddr{
-		IP: addrs[0].(*net.IPNet).IP,
-	}
-
-	return tcpAddr, nil
-}
-
 func (socks5 *Socks5ProxyHandler) Handle(connect net.Conn) {
 	if err := recover(); err != nil {
 		log.Fatalf("err: %s", err)
@@ -83,62 +69,80 @@ func (socks5 *Socks5ProxyHandler) Handle(connect net.Conn) {
 		return
 	}
 
-	if b[0] == 0x05 {
+	if b[0] != 0x05 {
+		return
+	}
 
-		if socks5.Auth == false {
-			connect.Write(noAuth)
+	if socks5.Auth == false {
+		connect.Write(noAuth)
+	} else {
+		connect.Write(withAuth)
+
+		_, err = connect.Read(b)
+		if err != nil {
+			return
+		}
+
+		userLength := int(b[1])
+		user := string(b[2:(2 + userLength)])
+		pass := string(b[(2 + userLength):])
+
+		if socks5.User == user && socks5.Pass == pass {
+			connect.Write(authSuccess)
 		} else {
-			connect.Write(withAuth)
-
-			_, err = connect.Read(b)
-			if err != nil {
-				return
-			}
-
-			user_length := int(b[1])
-			user := string(b[2:(2 + user_length)])
-			pass := string(b[(2 + user_length):])
-
-			if socks5.User == user && socks5.Pass == pass {
-				connect.Write(authSuccess)
-			} else {
-				connect.Write(authFailed)
-				return
-			}
-		}
-
-		addr, err := socks5.getPPPIp("ppp0")
-		if err != nil {
-			log.Printf("获取ip失败")
+			connect.Write(authFailed)
 			return
 		}
+	}
 
-		dialer := net.Dialer{
-			LocalAddr: addr,
-			//Control: func(network, address string, c syscall.RawConn) error {
-			//
-			//	log.Printf("net:%s add:%s",network,address)
-			//	return c.Control(func(fd uintptr) {
-			//		err := syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, 25, "ppp0")
-			//		if err != nil {
-			//			log.Printf("control: %s", err)
-			//			return
-			//		}
-			//	})
-			//},
-		}
+	pptp := env.GetPPTP(socks5.User)
 
-		host, port := socks5.getInfo(b, connect)
-		server, err := dialer.Dial("tcp", net.JoinHostPort(host, port))
-		if server != nil {
-			defer server.Close()
-		}
+	dialer := net.Dialer{
+		LocalAddr: pptp.Ip,
+	}
+
+	host, port := socks5.getInfo(b, connect)
+	server, err := dialer.Dial("tcp", net.JoinHostPort(host, port))
+	if server != nil {
+		defer server.Close()
+	}
+	if err != nil {
+		return
+	}
+	connect.Write(connectSuccess)
+
+	go io.Copy(server, connect)
+	io.Copy(connect, server)
+}
+
+func NewSocket5(user config.User) (*Socks5ProxyHandler, error) {
+	socket, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		return nil, err
+	}
+
+	port := socket.Addr().(*net.TCPAddr).Port
+	fmt.Printf("socks5 proxy server auth [%s] on port [:%d], listening ... \n", aurora.Green(user.User), aurora.Green(port))
+
+	env.SetSocket5Port(user.User, port)
+
+	for {
+		client, err := socket.Accept()
+
 		if err != nil {
-			return
+			log.Errorf("客户端连接失败：%s", err)
+			continue
 		}
-		connect.Write(connectSuccess)
 
-		go io.Copy(server, connect)
-		io.Copy(connect, server)
+		var handler Handler = &Socks5ProxyHandler{
+			Port: port,
+			Auth: false,
+			User: user.User,
+			Pass: user.Pass,
+		}
+
+		go handler.Handle(client)
+
+		log.Println(aurora.Blue(client), " request handling...")
 	}
 }
