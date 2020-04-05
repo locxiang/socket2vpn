@@ -1,0 +1,20 @@
+log:
+  writers: file
+  logger_level: INFO
+  logger_file: storage/logs/log.log
+
+mysql:
+  addr: 127.0.0.1:3306
+  user: root
+  pass: root123
+  db: waiwai
+
+users:
+- {user: kf21,pass: 123}
+- {user: kf22,pass: 123}
+
+servers:
+  - zhejiang.hunbo.cc
+  - jiangsu.hunbo.cc
+  - guangdong.hunbo.cc
+  - fujian.hunbo.cc
