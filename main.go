@@ -1,6 +1,7 @@
 package main
 
 import (
+	nested "github.com/antonfisher/nested-logrus-formatter"
 	"github.com/logrusorgru/aurora"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
@@ -51,18 +52,16 @@ func initLog() {
 	time.Sleep(1 * time.Second)
 	c := config.Values.Log
 
+	log.SetFormatter(&nested.Formatter{
+		TimestampFormat: time.RFC3339,
+	})
+
 	if c.LoggerFile != "" && c.Writers == "file" {
 		_ = os.MkdirAll(path.Dir(c.LoggerFile), os.ModePerm)
 		file, err := os.OpenFile(c.LoggerFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_SYNC, 0600)
 		if err != nil {
 			log.Panicf("log  init failed:%s", err)
 		}
-
-		log.SetFormatter(&log.TextFormatter{
-			FullTimestamp:   true,
-			TimestampFormat: "2006-01-02 15:04:05",
-			DisableColors:   true,
-		})
 
 		log.SetOutput(file)
 	} else {

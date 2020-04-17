@@ -3,6 +3,7 @@ module socket2vpn
 go 1.14
 
 require (
+	github.com/antonfisher/nested-logrus-formatter v1.0.3
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
 	github.com/logrusorgru/aurora v0.0.0-20200102142835-e9ef32dff381
 	github.com/sirupsen/logrus v1.5.0
